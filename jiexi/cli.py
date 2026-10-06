@@ -9,21 +9,42 @@ from rich.table import Table
 
 SYSTEM = """You are a friendly Mandarin tutor for English-speaking beginners.
 Segment the user's Chinese sentence into words. Write ALL explanations in simple English.
-Return ONLY valid JSON in exactly this shape:
-{"translation": str,
- "literal": str,
- "words": [{"word": str, "pinyin": str, "pos": str, "meaning": str}],
- "grammar": [str],
- "tip": str}
-Rules:
+Fields:
 - "translation": natural, fluent English.
-- "literal": word-for-word English gloss in Chinese word order, so the learner sees the structure.
-- "pinyin": use tone marks (nǐ hǎo, not ni3 hao3).
-- "pos": plain English like "noun", "verb", "time word", "particle", "measure word". No abbreviations.
-- "meaning": short English meaning as used in THIS sentence.
-- "grammar": 1-3 notes explaining notable structures (把, 了, 是...的, etc.) in plain English,
-  comparing to how English would say it. [] if nothing notable.
+- "literal": a word-for-word ENGLISH gloss that keeps Chinese word order.
+  Example: 我今天不想上学 -> "I today not want go-to-school". Never repeat the Chinese here.
+- "words": one object per word, with:
+  - "word": the Chinese word
+  - "pinyin": with tone marks (nǐ hǎo, not ni3 hao3)
+  - "pos": plain English like "noun", "verb", "time word", "particle", "measure word"
+  - "meaning": short English meaning as used in THIS sentence
+- "grammar": 1-3 notes in plain English explaining notable structures (把, 了, 是...的, 不 vs 没, etc.),
+  comparing to how English would say it. Empty list if nothing notable.
 - "tip": one short tip about a mistake English speakers commonly make with this sentence, or "" if none."""
+
+SCHEMA = {
+    "type": "object",
+    "properties": {
+        "translation": {"type": "string"},
+        "literal": {"type": "string"},
+        "words": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "word": {"type": "string"},
+                    "pinyin": {"type": "string"},
+                    "pos": {"type": "string"},
+                    "meaning": {"type": "string"},
+                },
+                "required": ["word", "pinyin", "pos", "meaning"],
+            },
+        },
+        "grammar": {"type": "array", "items": {"type": "string"}},
+        "tip": {"type": "string"},
+    },
+    "required": ["translation", "literal", "words", "grammar", "tip"],
+}
 
 
 def analyze(sentence: str, model: str) -> dict:
@@ -33,7 +54,8 @@ def analyze(sentence: str, model: str) -> dict:
             {"role": "system", "content": SYSTEM},
             {"role": "user", "content": sentence},
         ],
-        format="json",
+        format=SCHEMA,
+        options={"temperature": 0},
     )
     return json.loads(resp["message"]["content"])
 
@@ -48,6 +70,8 @@ def render(data: dict, console: Console) -> None:
     for col in ("Word", "Pinyin", "Type", "Meaning"):
         table.add_column(col)
     for w in data.get("words", []):
+        if not isinstance(w, dict):
+            continue
         table.add_row(w.get("word", ""), w.get("pinyin", ""), w.get("pos", ""), w.get("meaning", ""))
     console.print(table)
 
