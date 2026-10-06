@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import re
 import sys
 
 import ollama
@@ -8,11 +9,16 @@ from rich.console import Console
 from rich.table import Table
 
 SYSTEM = """You are a friendly Mandarin tutor for English-speaking beginners.
-Segment the user's Chinese sentence into words. Write ALL explanations in simple English.
+First decide if the input is a real, grammatical Chinese sentence or phrase.
+If it is random characters or nonsense, set "valid" to false, explain briefly in "problem",
+and still break down each character honestly (do NOT invent names or meanings).
+Write ALL explanations in simple English.
 Fields:
-- "translation": natural, fluent English.
+- "valid": true if it is a real Chinese sentence/phrase, false if it is nonsense.
+- "problem": if not valid, one short sentence on why. Otherwise "".
+- "translation": natural, fluent English. If not valid, "".
 - "literal": a word-for-word ENGLISH gloss that keeps Chinese word order.
-  Example: 我今天不想上学 -> "I today not want go-to-school". Never repeat the Chinese here.
+  Example: 我今天不想上学 -> "I today not want go-to-school". Never put Chinese characters here.
 - "words": one object per word, with:
   - "word": the Chinese word
   - "pinyin": with tone marks (nǐ hǎo, not ni3 hao3)
@@ -25,6 +31,8 @@ Fields:
 SCHEMA = {
     "type": "object",
     "properties": {
+        "valid": {"type": "boolean"},
+        "problem": {"type": "string"},
         "translation": {"type": "string"},
         "literal": {"type": "string"},
         "words": {
@@ -43,8 +51,10 @@ SCHEMA = {
         "grammar": {"type": "array", "items": {"type": "string"}},
         "tip": {"type": "string"},
     },
-    "required": ["translation", "literal", "words", "grammar", "tip"],
+    "required": ["valid", "problem", "translation", "literal", "words", "grammar", "tip"],
 }
+
+CJK = re.compile(r"[\u4e00-\u9fff]")
 
 
 def analyze(sentence: str, model: str) -> dict:
@@ -61,9 +71,15 @@ def analyze(sentence: str, model: str) -> dict:
 
 
 def render(data: dict, console: Console) -> None:
-    console.print(f"\n[bold]Translation:[/bold] {data.get('translation', '')}")
-    if data.get("literal"):
-        console.print(f"[dim]Literally: {data['literal']}[/dim]")
+    console.print()
+    if data.get("valid") is False:
+        console.print(f"[bold red]Doesn't look like a real sentence:[/bold red] {data.get('problem', '')}")
+        console.print("[dim]Character breakdown below may be unreliable.[/dim]")
+    else:
+        console.print(f"[bold]Translation:[/bold] {data.get('translation', '')}")
+        literal = data.get("literal", "")
+        if literal and not CJK.search(literal):
+            console.print(f"[dim]Literally: {literal}[/dim]")
     console.print()
 
     table = Table(show_header=True, header_style="bold cyan")
@@ -75,13 +91,13 @@ def render(data: dict, console: Console) -> None:
         table.add_row(w.get("word", ""), w.get("pinyin", ""), w.get("pos", ""), w.get("meaning", ""))
     console.print(table)
 
-    if data.get("grammar"):
-        console.print("\n[bold]Grammar notes[/bold]")
-        for note in data["grammar"]:
-            console.print(f"  • {note}")
-
-    if data.get("tip"):
-        console.print(f"\n[bold yellow]Watch out:[/bold yellow] {data['tip']}")
+    if data.get("valid") is not False:
+        if data.get("grammar"):
+            console.print("\n[bold]Grammar notes[/bold]")
+            for note in data["grammar"]:
+                console.print(f"  • {note}")
+        if data.get("tip"):
+            console.print(f"\n[bold yellow]Watch out:[/bold yellow] {data['tip']}")
     console.print()
 
 
