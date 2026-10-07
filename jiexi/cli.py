@@ -9,29 +9,38 @@ from rich.console import Console
 from rich.table import Table
 
 SYSTEM = """You are a friendly Mandarin tutor for English-speaking beginners.
-First decide if the input is a real, grammatical Chinese sentence or phrase.
-If it is random characters or nonsense, set "valid" to false, explain briefly in "problem",
-and still break down each character honestly (do NOT invent names or meanings).
-Write ALL explanations in simple English.
-Fields:
-- "valid": true if it is a real Chinese sentence/phrase, false if it is nonsense.
-- "problem": if not valid, one short sentence on why. Otherwise "".
-- "translation": natural, fluent English. If not valid, "".
-- "literal": a word-for-word ENGLISH gloss that keeps Chinese word order.
+Write EVERY explanation in English. Only use Chinese when quoting specific words.
+
+Step 1. Classify the input as one of:
+- "correct": a natural, grammatical Chinese sentence or phrase.
+- "mistake": you can tell what the writer meant, but it has errors (wrong word, missing word,
+  wrong word order, wrong particle, typo, etc.).
+- "nonsense": random characters with no clear intended meaning.
+
+Step 2. Fill the fields:
+- "status": one of the three above.
+- "corrected": if "mistake", the most likely intended correct sentence. Otherwise "".
+- "mistakes": if "mistake", 1-3 short English explanations of what was wrong and why.
+  Example: "今 alone isn't used for 'today' in speech, use 今天." Otherwise [].
+- "problem": if "nonsense", one short English sentence on why. Otherwise "".
+- "translation": natural English of the sentence (the corrected one if "mistake"). "" if nonsense.
+- "literal": word-for-word ENGLISH gloss in Chinese word order, of the corrected sentence if "mistake".
   Example: 我今天不想上学 -> "I today not want go-to-school". Never put Chinese characters here.
-- "words": one object per word, with:
-  - "word": the Chinese word
-  - "pinyin": with tone marks (nǐ hǎo, not ni3 hao3)
-  - "pos": plain English like "noun", "verb", "time word", "particle", "measure word"
-  - "meaning": short English meaning as used in THIS sentence
-- "grammar": 1-3 notes in plain English explaining notable structures (把, 了, 是...的, 不 vs 没, etc.),
-  comparing to how English would say it. Empty list if nothing notable.
-- "tip": one short tip about a mistake English speakers commonly make with this sentence, or "" if none."""
+- "words": break down the sentence (the CORRECTED one if "mistake") into real words, keeping
+  compound words together (上学 is one word, not 上 + 学). Each with:
+  - "word", "pinyin" (tone marks: nǐ hǎo), "pos" (plain English: noun, verb, time word, particle,
+    measure word), "meaning" (short English, as used here).
+  If nonsense, list each character honestly; do NOT invent names or meanings.
+- "grammar": 1-3 English notes on notable structures (把, 了, 是...的, 不 vs 没, etc.),
+  comparing to English. [] if nothing notable or nonsense.
+- "tip": one short English tip about a common mistake English speakers make here, or ""."""
 
 SCHEMA = {
     "type": "object",
     "properties": {
-        "valid": {"type": "boolean"},
+        "status": {"type": "string", "enum": ["correct", "mistake", "nonsense"]},
+        "corrected": {"type": "string"},
+        "mistakes": {"type": "array", "items": {"type": "string"}},
         "problem": {"type": "string"},
         "translation": {"type": "string"},
         "literal": {"type": "string"},
@@ -51,7 +60,8 @@ SCHEMA = {
         "grammar": {"type": "array", "items": {"type": "string"}},
         "tip": {"type": "string"},
     },
-    "required": ["valid", "problem", "translation", "literal", "words", "grammar", "tip"],
+    "required": ["status", "corrected", "mistakes", "problem", "translation",
+                 "literal", "words", "grammar", "tip"],
 }
 
 CJK = re.compile(r"[\u4e00-\u9fff]")
@@ -71,11 +81,18 @@ def analyze(sentence: str, model: str) -> dict:
 
 
 def render(data: dict, console: Console) -> None:
+    status = data.get("status", "correct")
     console.print()
-    if data.get("valid") is False:
-        console.print(f"[bold red]Doesn't look like a real sentence:[/bold red] {data.get('problem', '')}")
+
+    if status == "nonsense":
+        console.print(f"[bold red]Doesn't look like a real sentence.[/bold red] {data.get('problem', '')}")
         console.print("[dim]Character breakdown below may be unreliable.[/dim]")
     else:
+        if status == "mistake" and data.get("corrected"):
+            console.print(f"[bold yellow]Did you mean:[/bold yellow] {data['corrected']}")
+            for m in data.get("mistakes", []):
+                console.print(f"  [yellow]✗[/yellow] {m}")
+            console.print()
         console.print(f"[bold]Translation:[/bold] {data.get('translation', '')}")
         literal = data.get("literal", "")
         if literal and not CJK.search(literal):
@@ -91,7 +108,7 @@ def render(data: dict, console: Console) -> None:
         table.add_row(w.get("word", ""), w.get("pinyin", ""), w.get("pos", ""), w.get("meaning", ""))
     console.print(table)
 
-    if data.get("valid") is not False:
+    if status != "nonsense":
         if data.get("grammar"):
             console.print("\n[bold]Grammar notes[/bold]")
             for note in data["grammar"]:
